@@ -189,6 +189,9 @@ export function createGeneratePlugin({
       handler(code, id) {
         const shouldEmit = !RE_JS.test(id) || emitJs
 
+        const isJson = RE_JSON.test(id)
+        if (isJson && oxc) return
+
         if (shouldEmit) {
           const mod = this.getModuleInfo(id)
           const isEntry = !!mod?.isEntry
@@ -207,7 +210,7 @@ export function createGeneratePlugin({
         }
 
         if (emitDtsOnly) {
-          if (RE_JSON.test(id)) return '{}'
+          if (isJson) return '{}'
           return 'export { }'
         }
       },
