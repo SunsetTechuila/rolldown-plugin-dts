@@ -104,34 +104,36 @@ export function createGeneratePlugin({
   let tscContext: TscContext | undefined
   let tsgoDist: string | undefined
 
+  async function spinUpTsgo() {
+    tsgoDist = await runTsgo(cwd, tsconfig)
+  }
+
+  async function spinUpTsc() {
+    if (parallel) {
+      childProcess = fork(new URL(WORKER_URL, import.meta.url), {
+        stdio: 'inherit',
+      })
+      rpc = (await import('birpc')).createBirpc<TscFunctions>(
+        {},
+        {
+          post: (data) => childProcess!.send(data),
+          on: (fn) => childProcess!.on('message', fn),
+        },
+      )
+    } else {
+      tscModule = await import('./tsc/index.ts')
+      if (newContext) {
+        tscContext = createContext()
+      }
+    }
+  }
+
   return {
     name: 'rolldown-plugin-dts:generate',
 
     async buildStart(options) {
       // isWatch = this.meta.watchMode
-
-      if (tsgo) {
-        tsgoDist = await runTsgo(cwd, tsconfig)
-      } else if (!oxc) {
-        // tsc
-        if (parallel) {
-          childProcess = fork(new URL(WORKER_URL, import.meta.url), {
-            stdio: 'inherit',
-          })
-          rpc = (await import('birpc')).createBirpc<TscFunctions>(
-            {},
-            {
-              post: (data) => childProcess!.send(data),
-              on: (fn) => childProcess!.on('message', fn),
-            },
-          )
-        } else {
-          tscModule = await import('./tsc/index.ts')
-          if (newContext) {
-            tscContext = createContext()
-          }
-        }
-      }
+      let hasJsonModule = false
 
       if (!Array.isArray(options.input)) {
         for (const [name, id] of Object.entries(options.input)) {
@@ -143,7 +145,15 @@ export function createGeneratePlugin({
           const resolvedId = resolved?.id || id
           debug('resolved input alias %s -> %s', id, resolvedId)
           inputAliasMap.set(resolvedId, name)
+
+          if (RE_JSON.test(resolvedId)) hasJsonModule = true
         }
+      }
+
+      if (tsgo) {
+        await spinUpTsgo()
+      } else if (!oxc || hasJsonModule) {
+        await spinUpTsc()
       }
     },
 
@@ -243,7 +253,7 @@ export function createGeneratePlugin({
               `tsgo did not generate dts file for ${id}, please check your tsconfig.`,
             )
           }
-        } else if (oxc && !RE_VUE.test(id)) {
+        } else if (oxc && !RE_VUE.test(id) && !RE_JSON.test(id)) {
           const result = oxcIsolatedDeclaration(id, code, oxc)
           if (result.errors.length) {
             const [error] = result.errors
@@ -277,6 +287,7 @@ export function createGeneratePlugin({
             context: tscContext,
           }
           let result: TscResult
+          if (!rpc && !tscModule) await spinUpTsc()
           if (parallel) {
             result = await rpc!.tscEmit(options)
           } else {
