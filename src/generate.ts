@@ -244,6 +244,8 @@ export function createGeneratePlugin({
             )
           }
         } else if (oxc && !RE_VUE.test(id)) {
+          if (RE_JSON.test(id))
+            throw new Error('oxc does not support JSON files.')
           const result = oxcIsolatedDeclaration(id, code, oxc)
           if (result.errors.length) {
             const [error] = result.errors
